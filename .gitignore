@@ -1,0 +1,21 @@
+# Binaries
+bin/
+hypercache
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test & coverage
+*.out
+*.test
+coverage.txt
+
+# Environment & IDEs
+.env
+.env.local
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
