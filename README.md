@@ -1,123 +1,168 @@
-<div align="center">
+# HyperCache-Go
 
-# ⚡ HyperCache-Go
-### Ultra-High-Throughput In-Memory Key-Value Store & Cache with Redis RESP Protocol Compatibility
-#### محرك تخزين مؤقت وكاش فائق السرعة في الذاكرة بلغة Go متوافق تماماً مع بروتوكول Redis
+A small, dependency-free, Redis RESP2-compatible in-memory cache server written in Go.
 
-[![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
-[![Redis Protocol](https://img.shields.io/badge/Protocol-RESP%20v2-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io)
-[![Throughput](https://img.shields.io/badge/Throughput-100k%2B%20ops%2Fsec-brightgreen?style=for-the-badge)](https://github.com/rad03i2/HyperCache-Go)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docker.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+> **Status:** functional cache server intended for local development, learning, sidecars, and controlled internal workloads. It is not a full Redis replacement.
 
-<br/>
+## English
 
-[English Overview](#-english-overview) • [التوثيق بالعربية](#-نظرة-عامة-باللغة-العربية) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [Commercial Systems Consulting](#-commercial-systems-engineering--high-throughput-consulting)
+### Why it exists
+HyperCache-Go demonstrates a practical concurrent cache with a network protocol real Redis clients can speak. It favors a small auditable codebase over broad Redis compatibility.
 
-</div>
+### Features
+- Sharded concurrent map using FNV-1a routing and per-shard locks.
+- Binary-safe values with defensive copies on write/read.
+- TTL expiration with active background cleanup and lazy expiration.
+- RESP2 TCP server with `PING`, `SET`, `GET`, `DEL`, `EXISTS`, `TTL`, `DBSIZE`, `INFO`, and `QUIT`.
+- `SET key value EX seconds` and `SET key value PX milliseconds`.
+- Atomic hit/miss/set/delete counters.
+- Graceful cache cleanup-loop shutdown through `Close()`.
+- No runtime dependencies; Docker image runs as a non-root user.
 
----
+### Requirements
+Go 1.22+; optionally Docker and `redis-cli`.
 
-## 🌟 Highlights
-
-**HyperCache-Go** is a concurrent, sharded in-memory key-value cache engineered from the ground up in Go for extreme throughput and sub-millisecond response latencies.
-
-It natively speaks the **Redis Serialization Protocol (RESP v2)**, allowing seamless drop-in integration with any existing client library (`redis-cli`, Python `redis-py`, Node.js `ioredis`, or Go `go-redis`) without modifying application code.
-
----
-
-## 🚀 Key Features
-
-- 🏎️ **64-Shard Concurrent Architecture**: Eliminates global lock contention using FNV-1a hashing and independent RWMutex partitions.
-- 🔌 **Native Redis Client Compatibility**: Directly connect using standard `redis-cli -p 6379`.
-- ⏱️ **Active TTL & Eviction Engine**: High-efficiency background goroutines prune expired keys automatically.
-- 📊 **Telemetry & Stats HTTP API**: Built-in JSON metrics endpoint for Prometheus and health probes (`/stats`).
-- 📦 **Zero External C Dependencies**: Pure Go standard library networking and concurrency.
-
----
-
-## 🏛️ Architecture
-
-```text
-               [ Redis Clients (redis-cli, Python, Node, Go) ]
-                                      │
-                                      ▼ (TCP :6379)
-                        ┌───────────────────────────┐
-                        │   RESP Protocol Parser    │
-                        └─────────────┬─────────────┘
-                                      │
-                                      ▼
-                        ┌───────────────────────────┐
-                        │   FNV-1a Shard Router     │
-                        └─────────────┬─────────────┘
-                                      │
-          ┌───────────────────────────┼───────────────────────────┐
-          ▼                           ▼                           ▼
- ┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
- │ Shard 0 (RWMutex)│        │ Shard 1 (RWMutex)│        │ Shard 63 (Mutex)│
- └─────────────────┘         └─────────────────┘         └─────────────────┘
-          ▲
-          └────────── [ Background TTL Active Eviction Loop ]
-```
-
----
-
-## ⚡ Quick Start
-
-### 1. Build and Run
+### Install & run
 ```bash
 git clone https://github.com/rad03i2/HyperCache-Go.git
 cd HyperCache-Go
-
-# Build binary
-go build -o hypercache cmd/hypercache/main.go
-
-# Start server
-./hypercache -port=6379 -http=8080
+go run ./cmd/hypercache -addr=127.0.0.1:6379
 ```
 
-### 2. Connect via Standard `redis-cli`
+Options:
+```text
+-addr     TCP listen address (default 127.0.0.1:6379)
+-shards   cache shard count (default 64)
+-cleanup  expired-key cleanup interval (default 5s)
+```
+
+### Usage
 ```bash
-redis-cli -p 6379
-
-127.0.0.1:6379> PING
-PONG
-127.0.0.1:6379> SET user:101 "Radwan Ahmed"
-OK
-127.0.0.1:6379> GET user:101
-"Radwan Ahmed"
+redis-cli -p 6379 PING
+redis-cli -p 6379 SET greeting "hello"
+redis-cli -p 6379 GET greeting
+redis-cli -p 6379 SET session abc EX 60
+redis-cli -p 6379 TTL session
+redis-cli -p 6379 INFO
 ```
 
-### 3. Check Live Telemetry Metrics
+Docker:
 ```bash
-curl http://localhost:8080/stats
-# Output: {"status":"online","keys":1,"hits":1,"misses":0}
+docker build -t hypercache-go .
+docker run --rm -p 6379:6379 hypercache-go
 ```
 
+### Project structure
+```text
+cmd/hypercache/main.go   executable entrypoint
+pkg/cache/               sharded cache, TTL and metrics
+pkg/resp/                RESP2 parser/writer
+pkg/server/              TCP command server
+.github/workflows/ci.yml cross-platform CI
+```
+
+### Testing
+```bash
+go vet ./...
+go test -race ./...
+go build ./cmd/hypercache
+```
+CI runs these checks on Linux, Windows and macOS with Go 1.22 and 1.23.
+
+### Preview guidance
+This is a TCP service rather than a graphical app. For a project preview, capture a terminal with two panes: the HyperCache startup log on one side and `redis-cli` commands (`SET`, `GET`, `TTL`, `INFO`) on the other.
+
+### Configuration
+Configuration is intentionally CLI-only. No environment variables, credentials, or external services are required.
+
+### Security & privacy
+HyperCache does not provide authentication, TLS, ACLs, encryption at rest, persistence, or network isolation. The default bind address is loopback for safer local use. If you expose it beyond a trusted machine/network, put it behind appropriate network and transport controls. Cached values live only in process memory.
+
+### Limitations
+- Data is lost when the process stops.
+- RESP2 support is deliberately partial; unsupported Redis commands return an error.
+- No replication, clustering, transactions, pub/sub, Lua, persistence, authentication, TLS, LRU/LFU memory cap, or Redis modules.
+- TTL precision exposed by `TTL` is seconds.
+- Performance claims require workload-specific benchmarks; this project makes no fixed throughput claim.
+
+### Optional roadmap
+Bounded-memory eviction, graceful TCP server shutdown, RESP parser limits, benchmarks, and opt-in authenticated/TLS deployment modes are reasonable future additions.
+
+### Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please include tests for behavior changes and keep the dependency footprint minimal.
+
+### License
+MIT — see [LICENSE](LICENSE).
+
+### Author
+**Radwan Abdulhadi Ahmed**  
+**رضوان عبدالهادي أحمد**  
+GitHub: **@rad03i2**
+
 ---
 
-## 🇸🇦 نظرة عامة باللغة العربية
+## العربية
 
-### ما هو مشروع HyperCache-Go؟
-**HyperCache-Go** هو محرك تخزين مؤقت وكاش عالي الأداء مبني بالكامل بلغة Go. صُمم لمعالجة مئات آلاف الطلبات في الثانية بزمن استجابة أقل من جزء من الثانية (Sub-millisecond).
+### نظرة عامة
+**HyperCache-Go** خادم تخزين مؤقت صغير يعمل في الذاكرة ومكتوب بلغة Go دون اعتماديات تشغيل خارجية. يستخدم RESP2 بحيث يمكن التعامل معه عبر `redis-cli` والعملاء المتوافقين مع Redis للأوامر المدعومة.
 
-### أهم المزايا التقنية:
-1. **معمارية التجزيء المتوازي (Sharded Concurrency)**: تقسيم الذاكرة إلى 64 قسماً مستقلاً، مما يقضي تماماً على عنق الزجاجة (Lock Contention) ويتيح استغلال كافة أنوية المعالج.
-2. **توافق كامل مع بروتوكول Redis**: يمكنك استخدامه كبديل مباشر لـ Redis في تطبيقاتك واستخدام نفس الأوامر مثل `PING`, `SET`, `GET`, `DEL`, `INFO`.
-3. **مراقبة حية**: خادم مدمج يوفر إحصائيات فورية عن عدد المفاتيح، والـ Hits والـ Misses.
+### لماذا يوجد المشروع؟
+الهدف هو تقديم تطبيق عملي وواضح لمخزن مفاتيح/قيم متزامن مع بروتوكول شبكي حقيقي، مع إبقاء قاعدة الكود صغيرة وقابلة للمراجعة بدل الادعاء بأنه بديل كامل لـ Redis.
 
----
+### المزايا
+- تقسيم الذاكرة إلى Shards لتقليل التنافس على الأقفال.
+- نسخ القيم عند الإدخال والإخراج لمنع تعديل الذاكرة الداخلية من الخارج.
+- انتهاء صلاحية TTL مع تنظيف خلفي وفحص عند القراءة.
+- الأوامر: `PING`, `SET`, `GET`, `DEL`, `EXISTS`, `TTL`, `DBSIZE`, `INFO`, `QUIT`.
+- دعم `EX` بالثواني و`PX` بالميلي ثانية مع `SET`.
+- عدادات Hits وMisses وSets وDeletes ذرّية.
+- إيقاف حلقة التنظيف الخلفية عبر `Close()`.
+- صورة Docker تعمل بمستخدم غير root.
 
-## 💼 Commercial Systems Engineering & High-Throughput Consulting
-### استشارات التعاقد وتطوير الأنظمة الموزعة عالية الأداء
+### المتطلبات والتثبيت
+يتطلب Go 1.22 أو أحدث. للتشغيل:
+```bash
+git clone https://github.com/rad03i2/HyperCache-Go.git
+cd HyperCache-Go
+go run ./cmd/hypercache -addr=127.0.0.1:6379
+```
 
-Need distributed in-memory caching, low-latency microservices, or custom protocol servers built in Go?
-هل تحتاج إلى بناء خوادم عالية الأداء، أنظمة موزعة، أو حلول تخزين ومعالجة بيانات ضخمة بلغة Go؟
+### مثال استخدام
+```bash
+redis-cli -p 6379 SET name "Radwan"
+redis-cli -p 6379 GET name
+redis-cli -p 6379 SET temp value EX 30
+redis-cli -p 6379 TTL temp
+redis-cli -p 6379 INFO
+```
 
-- 📩 **Contact**: Reach out via GitHub [@rad03i2](https://github.com/rad03i2)
-- 🤝 **Freelance & Enterprise Systems**: Open for specialized backend engineering contracts.
+### الاختبارات
+```bash
+go vet ./...
+go test -race ./...
+go build ./cmd/hypercache
+```
+ويشغّل GitHub Actions هذه الفحوصات على Linux وWindows وmacOS.
 
----
+### بنية المشروع
+`cmd/hypercache` يحتوي نقطة التشغيل، و`pkg/cache` محرك الكاش، و`pkg/resp` محلل RESP2، و`pkg/server` خادم TCP.
 
-## 📄 License
-Licensed under the [MIT License](LICENSE). Developed by [rad03i2](https://github.com/rad03i2).
+### الإعداد
+لا يحتاج المشروع ملف `.env` أو مفاتيح API أو أسرارًا. الإعدادات المتاحة حاليًا هي عنوان الاستماع وعدد الـShards وفاصل تنظيف المفاتيح المنتهية عبر خيارات سطر الأوامر.
+
+### الخصوصية والأمان
+لا يرسل البرنامج البيانات إلى خدمات خارجية. لكنه لا يوفر مصادقة أو TLS أو ACL أو تشفيرًا أو تخزينًا دائمًا. لذلك يرتبط افتراضيًا بـlocalhost، ولا ينبغي كشفه للإنترنت مباشرة.
+
+### القيود
+البيانات مؤقتة وتُفقد عند إيقاف البرنامج، وتوافق Redis جزئي فقط، ولا توجد replication أو clustering أو transactions أو pub/sub أو persistence أو حد ذاكرة/LRU. كما أن أي أرقام أداء يجب قياسها حسب الجهاز والحمل الفعلي.
+
+### التطوير الاختياري
+يمكن مستقبلًا إضافة حد للذاكرة وسياسة eviction، وإيقاف منظم لخادم TCP، وحدود أكثر صرامة لمحلل RESP، وbenchmarks موثقة.
+
+### المساهمة والترخيص
+راجع [CONTRIBUTING.md](CONTRIBUTING.md). المشروع مرخص وفق MIT؛ راجع [LICENSE](LICENSE).
+
+### المؤلف
+**Radwan Abdulhadi Ahmed**  
+**رضوان عبدالهادي أحمد**  
+GitHub: **@rad03i2**
